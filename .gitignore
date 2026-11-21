@@ -1,0 +1,32 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+media/
+data/
+bot_data/
+# Mutable account, room, points and bot-message state; keep outside Git.
+/auto_replies.json
+/custom_welcomes.json
+/game_stats.json
+/masters.json
+/messages.json
+/moderation.json
+/points.json
+/published_posts.json
+/replies.json
+/room_users.json
+/tracked_rooms.json
+/verified_users.json
+/vip_users.json
+/wager_state.json
+/الردود.json
+# Deployment-specific configuration.
+/railway.json
+# Local metadata and obsolete monolithic copies.
+/.talkin_device_id
+/bot.py.current-backup-*
+/bot_legacy_benchmark.py
+generated_games/
+generated_music/
