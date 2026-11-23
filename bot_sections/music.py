@@ -1202,6 +1202,67 @@ class MusicSection:
                             pass
             return info, downloaded_path
 
+    def _lavalink_first_track(self, query):
+        """Resolve the first YouTube video through Lavalink.
+
+        This is intentionally an internal source resolver, not a new command.
+        The existing .sa/.تشغيل flow sends the returned video URL as Talkin
+        room media so clients can render their native play button. If Lavalink
+        is unavailable or returns no usable YouTube URI, callers fall back to
+        the existing download/direct-source pipeline unchanged.
+        """
+        query = str(query or "").strip()
+        if not query or not LAVALINK_HOST or not LAVALINK_PASSWORD:
+            return None
+        host = LAVALINK_HOST
+        if host.startswith("https://"):
+            scheme, host = "https", host[8:]
+        elif host.startswith("http://"):
+            scheme, host = "http", host[7:]
+        else:
+            scheme = "https" if LAVALINK_SSL else "http"
+        host = host.split("/", 1)[0]
+        if ":" not in host and LAVALINK_PORT:
+            host = f"{host}:{LAVALINK_PORT}"
+        endpoint = f"{scheme}://{host}/v4/loadtracks"
+        response = requests.get(
+            endpoint,
+            params={"identifier": "ytsearch:" + query},
+            headers={"Authorization": LAVALINK_PASSWORD, "Accept": "application/json"},
+            timeout=LAVALINK_TIMEOUT,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if str(payload.get("loadType") or "").casefold() in {"empty", "error"}:
+            return None
+        data = payload.get("data")
+        tracks = data if isinstance(data, list) else [data] if isinstance(data, dict) else []
+        for item in tracks:
+            info = item.get("info") if isinstance(item, dict) else None
+            if not isinstance(info, dict):
+                continue
+            source = str(info.get("sourceName") or "").casefold()
+            identifier = str(info.get("identifier") or "").strip()
+            uri = str(info.get("uri") or "").strip()
+            if not uri and identifier and re.fullmatch(r"[A-Za-z0-9_-]{11}", identifier):
+                uri = "https://www.youtube.com/watch?v=" + identifier
+            if "youtube" not in source and not re.search(r"(?:youtube\.com|youtu\.be)", uri, re.I):
+                continue
+            if not re.match(r"^https?://", uri, re.I):
+                continue
+            length_ms = int(info.get("length") or 0)
+            if length_ms and length_ms > MUSIC_MAX_SECONDS * 1000:
+                continue
+            return {
+                "url": uri,
+                "title": str(info.get("title") or query).strip(),
+                "uploader": str(info.get("author") or "YouTube").strip(),
+                "duration": max(0, length_ms // 1000),
+                "source": "Lavalink/YouTube",
+                "source_url": uri,
+            }
+        return None
+
     def handle_youtube_direct_test_command(self, room, query, requester):
         """Search YouTube and send its direct audio URL without downloading it."""
         query = str(query or "").strip()
@@ -1441,29 +1502,50 @@ class MusicSection:
                         target_rooms = [str(room or "").strip()] if str(room or "").strip() else []
                     if not target_rooms:
                         raise RuntimeError("لا توجد غرفة مستهدفة لإرسال الأغنية")
-                    if not public_base:
-                        raise RuntimeError("لا يوجد رابط عام للصوت؛ اضبط PUBLIC_MEDIA_URL مع المنفذ العام الصحيح")
-                    # Room clients may accept an external stream URL packet yet
-                    # fail to fetch/play that provider URL. Host a normalized
-                    # MP3 on our own media server for reliable room playback.
-                    downloaded_info, downloaded_path = self._music_download(search_query)
-                    info = dict(downloaded_info or {})
-                    path = Path(downloaded_path)
-                    if not path.is_file() or path.stat().st_size <= 4096:
-                        raise RuntimeError("ملف MP3 المحلي غير موجود أو غير مكتمل")
-                    set_source(info, path)
-                    self._verify_public_media_url(url, media_kind="audio")
-                    for target_room in target_rooms:
-                        try:
-                            sent = self.send_room_media(target_room, url, "audio", duration)
-                            if sent is False:
-                                raise RuntimeError("Talkin لم يقبل حزمة MP3 المستضافة")
-                            published_rooms.append(target_room)
-                        except Exception as exc:
-                            self.log("[MUSIC] hosted MP3 rejected:", target_room, repr(exc))
+                    # Lavalink is the first source for the existing music
+                    # command. Send its selected YouTube URI directly as room
+                    # media so Talkin can render the native play button.
+                    lavalink_track = None
+                    try:
+                        lavalink_track = self._lavalink_first_track(search_query)
+                    except Exception as exc:
+                        self.log("[LAVALINK] first-source lookup failed; using existing music fallback:", repr(exc))
+                    if lavalink_track:
+                        set_source(lavalink_track)
+                        for target_room in target_rooms:
+                            try:
+                                sent = self.send_room_media(target_room, url, "audio", duration)
+                                if sent is False:
+                                    raise RuntimeError("Talkin لم يقبل رابط Lavalink")
+                                published_rooms.append(target_room)
+                            except Exception as exc:
+                                self.log("[MUSIC] Lavalink room media rejected:", target_room, repr(exc))
+                        if published_rooms:
+                            music_published = True
+
+                    # If Lavalink is unavailable or Talkin rejects its URI,
+                    # preserve the existing hosted-MP3 behavior as fallback.
                     if not published_rooms:
-                        raise RuntimeError("تعذر إرسال MP3 المستضاف إلى أي غرفة متصلة")
-                    music_published = True
+                        if not public_base:
+                            raise RuntimeError("لا يوجد رابط عام للصوت؛ اضبط PUBLIC_MEDIA_URL مع المنفذ العام الصحيح")
+                        downloaded_info, downloaded_path = self._music_download(search_query)
+                        info = dict(downloaded_info or {})
+                        path = Path(downloaded_path)
+                        if not path.is_file() or path.stat().st_size <= 4096:
+                            raise RuntimeError("ملف MP3 المحلي غير موجود أو غير مكتمل")
+                        set_source(info, path)
+                        self._verify_public_media_url(url, media_kind="audio")
+                        for target_room in target_rooms:
+                            try:
+                                sent = self.send_room_media(target_room, url, "audio", duration)
+                                if sent is False:
+                                    raise RuntimeError("Talkin لم يقبل حزمة MP3 المستضافة")
+                                published_rooms.append(target_room)
+                            except Exception as exc:
+                                self.log("[MUSIC] hosted MP3 rejected:", target_room, repr(exc))
+                        if not published_rooms:
+                            raise RuntimeError("تعذر إرسال الصوت إلى أي غرفة متصلة")
+                        music_published = True
 
                 self.music_current[_norm_user(requester)] = {
                     "requester": requester, "title": title, "artist": artist,

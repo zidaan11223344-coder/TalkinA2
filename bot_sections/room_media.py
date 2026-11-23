@@ -237,7 +237,7 @@ class RoomMediaSection:
         """
         if media_type == "audio":
             packet = encode_query(
-                "room_message", type_="audio",
+                "room_message", type_=ROOM_AUDIO_TYPE,
                 length=str(max(0, int(duration or 0))), room=room, url=media_url
             )
         else:

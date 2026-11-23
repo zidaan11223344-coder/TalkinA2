@@ -114,6 +114,14 @@ MUSIC_BUFFER_SIZE = int(os.getenv("MUSIC_BUFFER_SIZE", str(4 * 1024 * 1024)))
 MUSIC_THROTTLED_RATE = int(os.getenv("MUSIC_THROTTLED_RATE", str(128 * 1024)))
 MUSIC_COOLDOWN = float(os.getenv("MUSIC_COOLDOWN", "15"))
 MUSIC_DIRECT_CACHE_TTL = float(os.getenv("MUSIC_DIRECT_CACHE_TTL", "300"))
+# Lavalink is the first resolver for the existing .sa/.تشغيل music flow.
+# It only selects the YouTube video; Talkin receives the selected video URL as
+# the audio attachment so the client can expose its native play button.
+LAVALINK_HOST = os.getenv("LAVALINK_HOST", "").strip().rstrip("/")
+LAVALINK_PORT = os.getenv("LAVALINK_PORT", "25965").strip()
+LAVALINK_PASSWORD = os.getenv("LAVALINK_PASSWORD", "").strip()
+LAVALINK_SSL = os.getenv("LAVALINK_SSL", "0").strip().lower() in {"1", "true", "yes", "on"}
+LAVALINK_TIMEOUT = max(3.0, float(os.getenv("LAVALINK_TIMEOUT", "12")))
 # Reuse successfully prepared MP3 files for repeated requests. The cache is
 # disposable and bounded; each request still receives its own public media file.
 MUSIC_FILE_CACHE_TTL = max(60.0, float(os.getenv("MUSIC_FILE_CACHE_TTL", "1800")))
@@ -866,6 +874,8 @@ STREAM_MANUAL_ACCEPT_ONLY = os.getenv("STREAM_MANUAL_ACCEPT_ONLY", "0").strip() 
 # The current Talkin private-chat gateway displays type=audio as a text-only
 # message.  type=file delivers the actual downloadable MP3 to the recipient.
 PRIVATE_AUDIO_TYPE = os.getenv("PRIVATE_AUDIO_TYPE", "file").strip().lower() or "file"
+# Room audio uses the same attachment form so the client renders a play button.
+ROOM_AUDIO_TYPE = os.getenv("ROOM_AUDIO_TYPE", "file").strip().lower() or "file"
 # TalkinChat's APK uses Query action ``profile_update`` with type ``status``
 # and value field 11. Normalize the old incorrect alias so a stale Railway
 # variable cannot keep sending the unsupported ``update_profile`` action.
