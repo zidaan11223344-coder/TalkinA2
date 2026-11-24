@@ -1206,10 +1206,10 @@ class MusicSection:
         """Resolve the first YouTube video through Lavalink.
 
         This is intentionally an internal source resolver, not a new command.
-        The existing .sa/.تشغيل flow sends the returned video URL as Talkin
-        room media so clients can render their native play button. If Lavalink
-        is unavailable or returns no usable YouTube URI, callers fall back to
-        the existing download/direct-source pipeline unchanged.
+        The existing .sa/.تشغيل flow sends the resolved direct audio URL as
+        Talkin room media so clients can render and play the native button. If
+        Lavalink or direct extraction is unavailable, callers fall back to the
+        existing download/direct-source pipeline unchanged.
         """
         query = str(query or "").strip()
         if not query or not LAVALINK_HOST or not LAVALINK_PASSWORD:
@@ -1253,7 +1253,7 @@ class MusicSection:
             length_ms = int(info.get("length") or 0)
             if length_ms and length_ms > MUSIC_MAX_SECONDS * 1000:
                 continue
-            return {
+            selected = {
                 "url": uri,
                 "title": str(info.get("title") or query).strip(),
                 "uploader": str(info.get("author") or "YouTube").strip(),
@@ -1261,6 +1261,16 @@ class MusicSection:
                 "source": "Lavalink/YouTube",
                 "source_url": uri,
             }
+            # Lavalink selects the video, but its REST result is not itself a
+            # playable audio stream. Resolve the selected URI to a temporary
+            # direct audio URL before sending the Talkin attachment.
+            direct = self._music_live_source(uri)
+            if not isinstance(direct, dict) or not str(direct.get("url") or "").startswith(("http://", "https://")):
+                return None
+            selected["url"] = str(direct["url"]).strip()
+            selected["duration"] = int(direct.get("duration") or selected["duration"] or 0)
+            selected["direct_url"] = selected["url"]
+            return selected
         return None
 
     def handle_youtube_direct_test_command(self, room, query, requester):
